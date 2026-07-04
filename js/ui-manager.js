@@ -6,6 +6,7 @@ class UIManager {
     constructor(pdfHandler = null, storageManager = null) {
         this.currentView = 'upload';
         this.currentPDFId = null;
+        this.activeFieldId = null; // Track currently active field to prevent mobile keyboard loop
         this.modals = {};
         this.eventListenersAttached = false;
         this.pdfHandler = pdfHandler;
@@ -376,9 +377,8 @@ class UIManager {
             } else if (fieldInput.tagName === 'SELECT') {
                 fieldInput.value = detail.value;
             } else {
-                // For text inputs and textareas, only update if the value is different
-                // and the field is not currently focused to avoid interrupting typing
-                if (fieldInput.value !== detail.value && document.activeElement !== fieldInput) {
+                // Modified safety check: Skip syncing if this exact field is currently active
+                if (fieldInput.value !== detail.value && this.activeFieldId !== detail.fieldId) {
                     fieldInput.value = detail.value;
                 }
             }
@@ -392,9 +392,8 @@ class UIManager {
             } else if (overlayInput.tagName === 'SELECT') {
                 overlayInput.value = detail.value;
             } else {
-                // For text inputs and textareas, only update if the value is different
-                // and the field is not currently focused to avoid interrupting typing
-                if (overlayInput.value !== detail.value && document.activeElement !== overlayInput) {
+                // Modified safety check: Skip syncing if this exact field is currently active
+                if (overlayInput.value !== detail.value && this.activeFieldId !== detail.fieldId) {
                     overlayInput.value = detail.value;
                 }
             }
@@ -724,6 +723,16 @@ class UIManager {
                             window.pdfHandler.updateFieldValue(field.id, e.target.value);
                         });
                     } else {
+                        // Attach focus trackers to prevent programmatic updates crashing the keyboard layout loop
+                        input.addEventListener('focus', () => {
+                            this.activeFieldId = field.id;
+                        });
+                        input.addEventListener('blur', () => {
+                            if (this.activeFieldId === field.id) {
+                                this.activeFieldId = null;
+                            }
+                        });
+
                         input.addEventListener('input', (e) => {
                             window.pdfHandler.updateFieldValue(field.id, e.target.value);
                         });
@@ -1054,8 +1063,6 @@ class UIManager {
         if (editorSection) editorSection.style.display = 'none';
     }
 
-
-
     /**
      * Hide element
      * @param {string} id - Element ID
@@ -1069,4 +1076,4 @@ class UIManager {
 }
 
 // Export for use in other modules
-window.UIManager = UIManager; 
+window.UIManager = UIManager;
