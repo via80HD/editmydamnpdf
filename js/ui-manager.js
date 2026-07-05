@@ -6,7 +6,6 @@ class UIManager {
     constructor(pdfHandler = null, storageManager = null) {
         this.currentView = 'upload';
         this.currentPDFId = null;
-        this.activeFieldId = null; // Track currently active field to prevent mobile keyboard loop
         this.modals = {};
         this.eventListenersAttached = false;
         this.pdfHandler = pdfHandler;
@@ -368,22 +367,6 @@ class UIManager {
      * @param {Object} detail - Field change details
      */
     handleFieldValueChanged(detail) {
-        // Update the sidebar form field input
-        const fieldInput = document.getElementById(`field-${detail.fieldId}`);
-        if (fieldInput) {
-            // Update the value without losing focus
-            if (fieldInput.type === 'checkbox') {
-                fieldInput.checked = detail.value === 'Yes' || detail.value === true;
-            } else if (fieldInput.tagName === 'SELECT') {
-                fieldInput.value = detail.value;
-            } else {
-                // Modified safety check: Skip syncing if this exact field is currently active
-                if (fieldInput.value !== detail.value && this.activeFieldId !== detail.fieldId) {
-                    fieldInput.value = detail.value;
-                }
-            }
-        }
-        
         // Update the PDF overlay input
         const overlayInput = document.querySelector(`#form-overlay [data-field-id="${detail.fieldId}"]`);
         if (overlayInput) {
@@ -392,8 +375,9 @@ class UIManager {
             } else if (overlayInput.tagName === 'SELECT') {
                 overlayInput.value = detail.value;
             } else {
-                // Modified safety check: Skip syncing if this exact field is currently active
-                if (overlayInput.value !== detail.value && this.activeFieldId !== detail.fieldId) {
+                // For text inputs and textareas, only update if the value is different
+                // and the field is not currently focused to avoid interrupting typing
+                if (overlayInput.value !== detail.value && document.activeElement !== overlayInput) {
                     overlayInput.value = detail.value;
                 }
             }
@@ -478,7 +462,6 @@ class UIManager {
             // Update controls
             this.updatePageDisplay();
             this.updateZoomDisplay();
-            this.updateFormFieldPanel();
             
             // Load saved form field values after everything is ready
             // Use nextTick to ensure DOM is fully updated
@@ -541,7 +524,6 @@ class UIManager {
      * @returns {string} HTML string
      */
     createPDFListItem(pdf) {
-        // Super defensive - handle any possible invalid input
         try {
             if (!pdf || typeof pdf !== 'object') {
                 console.warn('⚠️ createPDFListItem received invalid input:', pdf);
@@ -638,207 +620,6 @@ class UIManager {
     }
 
     /**
-     * Update form field panel
-     */
-    updateFormFieldPanel() {
-        const fieldsList = document.getElementById('form-fields-list');
-        if (!fieldsList || !window.pdfHandler) return;
-
-        const formFields = window.pdfHandler.formFields;
-        
-        if (formFields.length === 0) {
-            fieldsList.innerHTML = '<p class="no-fields">No form fields detected in this PDF.</p>';
-            return;
-        }
-
-        fieldsList.innerHTML = formFields.map(field => this.createFormFieldItem(field)).join('');
-        
-        // Add event listeners for form field inputs
-        formFields.forEach(field => {
-            if (field.type === 'radio') {
-                // Handle radio button groups
-                const radioInputs = document.querySelectorAll(`input[name="radio-${field.id}"]`);
-                radioInputs.forEach(radio => {
-                    radio.addEventListener('click', (e) => {
-                        // Check if this radio button was already selected BEFORE the click
-                        const currentGroupValue = window.pdfHandler.formFields.find(f => f.id === field.id)?.value;
-                        const wasSelected = currentGroupValue === e.target.value;
-                        
-                        if (wasSelected) {
-                            // Prevent default radio button behavior
-                            e.preventDefault();
-                            
-                            // Clear the entire radio group
-                            e.target.checked = false;
-                            window.pdfHandler.updateFieldValue(field.id, '');
-                            
-                            // Clear all sidebar radio buttons in this group
-                            const sidebarRadios = document.querySelectorAll(`input[name="radio-${field.id}"]`);
-                            sidebarRadios.forEach(sidebarRadio => {
-                                sidebarRadio.checked = false;
-                            });
-                            
-                            // Clear overlay radio buttons
-                            const overlayRadios = document.querySelectorAll(`input[name="${field.name}"]`);
-                            overlayRadios.forEach(overlayRadio => {
-                                overlayRadio.checked = false;
-                            });
-                            
-                            // Update overlays
-                            window.pdfHandler.updateFormFieldOverlays();
-                        } else {
-                            // Select this radio button (normal behavior)
-                            window.pdfHandler.updateFieldValue(field.id, e.target.value);
-                            
-                            // Update all sidebar radio buttons in this group
-                            const sidebarRadios = document.querySelectorAll(`input[name="radio-${field.id}"]`);
-                            sidebarRadios.forEach(sidebarRadio => {
-                                sidebarRadio.checked = sidebarRadio.value === e.target.value;
-                            });
-                            
-                            // Update overlay radio buttons
-                            const overlayRadios = document.querySelectorAll(`input[name="${field.name}"]`);
-                            overlayRadios.forEach(overlayRadio => {
-                                overlayRadio.checked = overlayRadio.value === e.target.value;
-                            });
-                            
-                            // Update overlays
-                            window.pdfHandler.updateFormFieldOverlays();
-                        }
-                    });
-                });
-            } else {
-                const input = document.getElementById(`field-${field.id}`);
-                if (input) {
-                    // Handle different input types
-                    if (field.type === 'checkbox') {
-                        input.addEventListener('change', (e) => {
-                            const value = e.target.checked ? 'Yes' : 'No';
-                            console.log(`🔲 Sidebar checkbox change event - Field: ${field.name || field.id}, Checked: ${e.target.checked}, Value: ${value}`);
-                            window.pdfHandler.updateFieldValue(field.id, value);
-                        });
-                    } else if (field.type === 'select') {
-                        // Special handling for select elements
-                        input.addEventListener('change', (e) => {
-                            window.pdfHandler.updateFieldValue(field.id, e.target.value);
-                        });
-                    } else {
-                        // Attach focus trackers to prevent programmatic updates crashing the keyboard layout loop
-                        input.addEventListener('focus', () => {
-                            this.activeFieldId = field.id;
-                        });
-                        input.addEventListener('blur', () => {
-                            if (this.activeFieldId === field.id) {
-                                this.activeFieldId = null;
-                            }
-                        });
-
-                        input.addEventListener('input', (e) => {
-                            window.pdfHandler.updateFieldValue(field.id, e.target.value);
-                        });
-                        input.addEventListener('change', (e) => {
-                            window.pdfHandler.updateFieldValue(field.id, e.target.value);
-                        });
-                    }
-                }
-            }
-        });
-    }
-
-    /**
-     * Create form field item HTML
-     * @param {Object} field - Form field data
-     * @returns {string} HTML string
-     */
-    createFormFieldItem(field) {
-        const fieldTypeClass = field.type + '-field';
-        
-        let inputHtml = '';
-        switch (field.type) {
-            case 'text':
-                inputHtml = field.multiline 
-                    ? `<textarea class="form-field-input-panel" id="field-${field.id}" ${field.readonly ? 'readonly' : ''}>${field.value || ''}</textarea>`
-                    : `<input type="text" class="form-field-input-panel" id="field-${field.id}" value="${field.value || ''}" ${field.readonly ? 'readonly' : ''} ${field.maxLength ? `maxlength="${field.maxLength}"` : ''}>`;
-                break;
-            case 'checkbox':
-                inputHtml = `<input type="checkbox" class="form-field-input-panel" id="field-${field.id}" ${field.value === 'Yes' || field.value === true ? 'checked' : ''} ${field.readonly ? 'disabled' : ''}><label for="field-${field.id}">Check this box</label>`;
-                break;
-            case 'radio':
-                // For radio buttons, create actual radio button options
-                if (field.options && field.options.length > 0) {
-                    const radioOptions = field.options.map((option, index) => 
-                        `<label class="radio-option">
-                            <input type="radio" name="radio-${field.id}" value="${option}" ${option === field.value ? 'checked' : ''}>
-                            <span>${option}</span>
-                        </label>`
-                    ).join('');
-                    
-                    inputHtml = `
-                        <div class="radio-field-container">
-                            <div class="radio-options">
-                                ${radioOptions}
-                            </div>
-                            <small class="field-note">Radio button group: ${field.displayName || field.name}</small>
-                        </div>
-                    `;
-                } else {
-                    // Fallback for radio buttons without options
-                    inputHtml = `
-                        <div class="radio-field-container">
-                            <input type="text" class="form-field-input-panel" id="field-${field.id}" value="${field.value || ''}" ${field.readonly ? 'readonly' : ''} placeholder="Enter radio button value">
-                            <small class="field-note">Radio button group: ${field.displayName || field.name}</small>
-                        </div>
-                    `;
-                }
-                break;
-            case 'select':
-                if (field.options && field.options.length > 0) {
-                    const options = [
-                        '<option value="">Select an option...</option>',
-                        ...field.options.map(option => 
-                            `<option value="${option}" ${option === field.value ? 'selected' : ''}>${option}</option>`
-                        )
-                    ].join('');
-                    inputHtml = `<select class="form-field-input-panel" id="field-${field.id}" ${field.readonly ? 'disabled' : ''}>${options}</select>`;
-                } else {
-                    // Fallback to text input if no options
-                    inputHtml = `<input type="text" class="form-field-input-panel" id="field-${field.id}" value="${field.value || ''}" ${field.readonly ? 'readonly' : ''} placeholder="No options available">`;
-                }
-                break;
-            default:
-                inputHtml = `<input type="text" class="form-field-input-panel" id="field-${field.id}" value="${field.value || ''}" ${field.readonly ? 'readonly' : ''}>`;
-        }
-
-        // Build field info with additional details
-        let fieldInfo = `Page ${field.page} • ${field.type} field`;
-        
-        // Add technical field name if different from display name
-        if (field.name && field.displayName && field.name !== field.displayName) {
-            fieldInfo += ` • Field: ${field.name}`;
-        }
-        
-        // Add tooltip if available
-        let tooltipHtml = '';
-        if (field.tooltip && field.tooltip.trim()) {
-            tooltipHtml = `<span class="field-tooltip" title="${field.tooltip}">ℹ️</span>`;
-        }
-
-        return `
-            <div class="form-field-item ${fieldTypeClass}">
-                <label class="form-field-label" for="field-${field.id}">
-                    ${field.displayName || field.name || 'Unnamed Field'}
-                    ${field.required ? '<span class="text-red-500">*</span>' : ''}
-                    ${tooltipHtml}
-                </label>
-                ${inputHtml}
-                <div class="form-field-info">
-                    ${fieldInfo}
-                </div>
-            </div>
-        `;
-    }
-
-    /**
      * Show modal
      * @param {string} modalType - Modal type (about, help)
      */
@@ -898,7 +679,6 @@ class UIManager {
      * @param {string} type - Notification type (success, error, info)
      */
     showNotification(message, type = 'info') {
-        // Create notification element
         const notification = document.createElement('div');
         notification.className = `notification notification-${type}`;
         notification.style.cssText = `
@@ -916,7 +696,6 @@ class UIManager {
             transition: all 0.3s ease;
         `;
 
-        // Set background color based on type
         switch (type) {
             case 'success':
                 notification.style.backgroundColor = '#10b981';
@@ -931,13 +710,11 @@ class UIManager {
         notification.textContent = message;
         document.body.appendChild(notification);
 
-        // Animate in
         setTimeout(() => {
             notification.style.opacity = '1';
             notification.style.transform = 'translateX(0)';
         }, 100);
 
-        // Remove after delay
         setTimeout(() => {
             notification.style.opacity = '0';
             notification.style.transform = 'translateX(100%)';
@@ -962,7 +739,7 @@ class UIManager {
     showElement(id) {
         const element = document.getElementById(id);
         if (element) {
-            element.style.display = 'block';
+            element.style.display = id === 'pdf-editor' ? 'flex' : 'block';
         }
     }
 
@@ -975,7 +752,6 @@ class UIManager {
             return;
         }
 
-        // Show confirmation dialog
         const confirmed = await this.showConfirmationDialog(
             'Clear All Fields',
             'Are you sure you want to clear all form field values? This action cannot be undone.'
@@ -986,9 +762,7 @@ class UIManager {
         }
 
         try {
-            // Clear all form field values
             await window.pdfHandler.clearAllFormFields();
-            
             this.showNotification('All form field values cleared', 'success');
         } catch (error) {
             console.error('Error clearing form fields:', error);
@@ -1022,10 +796,7 @@ class UIManager {
             const storage = this.storageManager || new StorageManager();
             const storageInfo = await storage.getStorageInfo();
             
-            // Update text to show just total usage (no limits)
             storageText.textContent = `${storageInfo.formattedSize} used (${storageInfo.totalFiles} files)`;
-            
-            // Hide progress bar since there's no limit to compare against
             storageFill.style.width = '0%';
             storageFill.classList.remove('warning', 'danger');
             
